@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+WORKSHOP_ROOT="${ROOT_DIR}/smart-contract-workshop"
+FOUNDRY_DIR="${ROOT_DIR}/omne-foundry"
+PYSUBC_BIN="${FOUNDRY_DIR}/bin/pysub-compiler"
+PYSUBC_BUILD_BIN="${WORKSHOP_ROOT}/target/release/pysub-compiler"
+
+BLOX_ROOT=""
+PROFILE="release"
+METADATA_SIGNING_KEY=""
+
+usage() {
+  cat <<'EOF'
+Usage: build-bxt --blox-root PATH [--profile debug|release] [--signing-key PATH]
+
+Builds the pysub compiler, stages it into omne-foundry, and compiles the BXT
+contract using the Blox build script.
+
+Required:
+  --blox-root PATH     Path to the Blox repo (contains blox-token/)
+
+Options:
+  --profile PROFILE    Build profile passed to the BXT build script (default: release)
+  --signing-key PATH   Metadata signing key passed as METADATA_SIGNING_KEY
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --blox-root)
+      BLOX_ROOT="$2"
+      shift 2
+      ;;
+    --profile)
+      PROFILE="$2"
+      shift 2
+      ;;
+    --signing-key)
+      METADATA_SIGNING_KEY="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+if [[ -z "$BLOX_ROOT" ]]; then
+  echo "error: --blox-root is required" >&2
+  usage
+  exit 1
+fi
+
+BLOX_SCRIPT="${BLOX_ROOT}/blox-token/scripts/build_bxt_contract.sh"
+if [[ ! -x "$BLOX_SCRIPT" ]]; then
+  echo "error: build script not found or not executable: ${BLOX_SCRIPT}" >&2
+  exit 1
+fi
+
+if [[ ! -d "$WORKSHOP_ROOT" ]]; then
+  echo "error: smart-contract-workshop not found at ${WORKSHOP_ROOT}" >&2
+  exit 1
+fi
+
+mkdir -p "${FOUNDRY_DIR}/bin"
+
+pushd "$WORKSHOP_ROOT" >/dev/null
+cargo build --release -p pysub-compiler
+popd >/dev/null
+
+cp "${PYSUBC_BUILD_BIN}" "$PYSUBC_BIN"
+chmod +x "$PYSUBC_BIN"
+
+env_args=("PYSUBC=$PYSUBC_BIN")
+if [[ -n "$METADATA_SIGNING_KEY" ]]; then
+  env_args+=("METADATA_SIGNING_KEY=$METADATA_SIGNING_KEY")
+fi
+
+env "${env_args[@]}" "$BLOX_SCRIPT" --profile "$PROFILE"
